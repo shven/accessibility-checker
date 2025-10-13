@@ -45,8 +45,6 @@ export async function runAxeForUrls(opts: RunOptions): Promise<AxeResult[]> {
     for (const url of opts.urls) {
       const t0 = Date.now();
       try {
-        // eslint-disable-next-line no-console
-        console.log(`${icon.search} ${url}`);
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: opts.timeoutMs });
         await injectAxe(page);
         // Use axe-playwright checkA11y which returns void but throws on violations by default.

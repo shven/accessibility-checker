@@ -33,6 +33,7 @@ type CliArgs = {
   serve?: boolean;
   port?: number;
   open?: boolean;
+  agency?: AgencyInfo;
 };
 
 async function discover(base: string, args: CliArgs) {
@@ -73,6 +74,7 @@ async function scan(input: string, args: CliArgs) {
   const effectiveBase = args.base ?? (await getLastBase());
   const hostnameForState = effectiveBase ? new URL(effectiveBase).hostname : undefined;
   const maxIssues = await ensureMaxIssues(args.maxIssues, hostnameForState);
+  const agency = await ensureAgency();
   // Determine reports directory from base hostname ahead of the scan to store assets like screenshots
   const baseForHostnamePre = effectiveBase ?? 'https://example.com';
   const hostnamePre = new URL(baseForHostnamePre).hostname;
@@ -97,8 +99,8 @@ async function scan(input: string, args: CliArgs) {
   const htmlPath = path.join(reportsDir, 'index.html');
   const htmlNoImgPath = path.join(reportsDir, 'report.html');
   await writeDeveloperReport(results, jsonPath);
-  await writeHtmlReport(results, htmlPath, { includeImages: true });
-  await writeHtmlReport(results, htmlNoImgPath, { includeImages: false });
+  await writeHtmlReport(results, htmlPath, { includeImages: true, agency });
+  await writeHtmlReport(results, htmlNoImgPath, { includeImages: false, agency });
   // eslint-disable-next-line no-console
   console.log(`Reports written to ${jsonPath}, ${htmlPath} and ${htmlNoImgPath}`);
 
@@ -120,6 +122,7 @@ async function scan(input: string, args: CliArgs) {
 async function runAll(args: CliArgs) {
   const previousBase = await getLastBase();
   const base = await ensureBase(args.base);
+  const agency = await ensureAgency();
   const hostname = new URL(base).hostname;
   const maxIssues = await ensureMaxIssues(args.maxIssues, hostname);
   const urlsPath = await getUrlsPathForBase(base);
@@ -378,6 +381,45 @@ async function askYesNo(prompt: string, defaultYes: boolean): Promise<boolean> {
     if (normalized === 'y' || normalized === 'yes') return true;
     if (normalized === 'n' || normalized === 'no') return false;
     return defaultYes;
+  } finally {
+    rl.close();
+  }
+}
+
+type AgencyInfo = { name: string; url?: string } | undefined;
+
+async function ensureAgency(): Promise<AgencyInfo> {
+  const configDir = path.resolve('config');
+  try {
+    await fs.mkdir(configDir, { recursive: true });
+  } catch {}
+  const AGENCY_FILE = path.join(configDir, '.a11y-scan-agency.json');
+
+  // If settings file already exists, do not prompt again; return parsed info or undefined
+  if (await fileExists(AGENCY_FILE)) {
+    try {
+      const raw = await fs.readFile(AGENCY_FILE, 'utf8');
+      const parsed = JSON.parse(raw) as { name?: string; url?: string };
+      if (parsed && typeof parsed.name === 'string' && parsed.name.trim() !== '') {
+        return {
+          name: parsed.name.trim(),
+          url: typeof parsed.url === 'string' && parsed.url.trim() !== '' ? parsed.url.trim() : undefined,
+        };
+      }
+    } catch {}
+    return undefined;
+  }
+
+  // Settings file missing: ask once and create it
+  const rl = createInterface({ input, output });
+  try {
+    const name = (await rl.question('Enter your agency name to include in reports (optional): ')).trim();
+    const url = (await rl.question('Enter your agency URL (optional): ')).trim();
+    const info: AgencyInfo = name ? { name, url: url || undefined } : undefined;
+    try {
+      await fs.writeFile(AGENCY_FILE, JSON.stringify(info ?? {}, null, 2), 'utf8');
+    } catch {}
+    return info;
   } finally {
     rl.close();
   }

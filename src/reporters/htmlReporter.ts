@@ -57,12 +57,20 @@ function renderPage(result: AxeResult, includeImages: boolean): string {
 export async function writeHtmlReport(
   results: AxeResult[],
   outFile = 'reports/index.html',
-  opts?: { includeImages?: boolean }
+  opts?: { includeImages?: boolean; agency?: { name: string; url?: string } }
 ) {
   const totalPages = results.length;
   const pagesWithIssues = results.filter((r) => (r.violations?.length ?? 0) > 0).length;
   const totalViolations = results.reduce((acc, r) => acc + (r.violations?.length ?? 0), 0);
-  const generatedAt = new Date().toISOString();
+  const generatedAt = new Date().toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZoneName: 'short'
+  });
   const includeImages = opts?.includeImages !== false;
 
   // Determine base URL (common origin) across results
@@ -80,13 +88,20 @@ export async function writeHtmlReport(
     )
   );
   const baseUrlHtml = origins.length === 1
-    ? `<div class="meta">Base URL: <a class="url" href="${escapeHtml(origins[0])}" target="_blank" rel="noopener noreferrer">${escapeHtml(origins[0])}</a></div>`
+    ? `<div class="meta"><a class="url" href="${escapeHtml(origins[0])}" target="_blank" rel="noopener noreferrer">${escapeHtml(origins[0])}</a></div>`
     : origins.length > 1
-      ? `<div class="meta">Base URL: multiple (${origins.length})</div>`
+      ? `<div class="meta">multiple (${origins.length})</div>`
       : '';
 
   const resultsToRender = results.filter((r) => (r.violations?.length ?? 0) > 0 || r.error);
   const pagesHtml = resultsToRender.map((r) => renderPage(r, includeImages)).join('\n');
+
+  const agency = opts?.agency;
+  const agencyFooter = agency && agency.name
+    ? (agency.url
+        ? `<a href="${escapeHtml(agency.url)}" target="_blank" rel="noopener noreferrer" class="url">${escapeHtml(agency.name)}</a>. `
+        : `${escapeHtml(agency.name)}. `)
+    : '';
 
   const html = `<!doctype html>
 <html lang="en">
@@ -148,7 +163,7 @@ export async function writeHtmlReport(
         <div class="card"><div>Total violations</div><strong>${totalViolations}</strong></div>
       </div>
       ${pagesHtml}
-      <footer>Built by Playwright + axe-core.</footer>
+      ${agencyFooter.length > 0 ? `<footer>By ${agencyFooter}</footer>` : '<footer>Report generated with <a class="url" href="https://github.com/shven/accessibility-checker">accessibility checker</a></footer>'}
     </div>
   </body>
 </html>`;
