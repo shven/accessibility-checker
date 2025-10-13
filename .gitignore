@@ -1,0 +1,7 @@
+pnpm-lock.yaml
+
+# Exclude config directory
+config/
+
+# Exclude reports directory
+reports/
