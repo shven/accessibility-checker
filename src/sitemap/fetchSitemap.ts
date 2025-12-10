@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { parseStringPromise } from 'xml2js';
-import { isSameHost, normalizeUrl } from '../utils/url.js';
+import { isLikelyHtmlPage, isSameHost, normalizeUrl } from '../utils/url.js';
 
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -126,7 +126,9 @@ export async function parseSitemapUrls(sitemapUrl: string, base: string): Promis
         if (absolute) {
           const rewritten = rewriteToBaseOriginIfLocal(absolute);
           const normalized = normalizeUrl(rewritten);
-          if (isSameHost(base, normalized)) urls.add(normalized);
+          if (isSameHost(base, normalized) && isLikelyHtmlPage(normalized)) {
+            urls.add(normalized);
+          }
         }
       }
     }

@@ -40,6 +40,102 @@ export function isSameHost(a: string | URL, b: string | URL): boolean {
   return ua.host === ub.host && ua.protocol === ub.protocol;
 }
 
+const HTML_EXTENSIONS = new Set([
+  '',
+  '.html',
+  '.htm',
+  '.xhtml',
+  '.php',
+  '.php5',
+  '.asp',
+  '.aspx',
+  '.jsp',
+  '.cfm',
+]);
+
+const NON_HTML_EXTENSIONS = new Set([
+  '.pdf',
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.gif',
+  '.bmp',
+  '.svg',
+  '.webp',
+  '.ico',
+  '.avif',
+  '.mp4',
+  '.webm',
+  '.mov',
+  '.mkv',
+  '.mp3',
+  '.wav',
+  '.flac',
+  '.zip',
+  '.rar',
+  '.7z',
+  '.gz',
+  '.tgz',
+  '.tar',
+  '.bz2',
+  '.json',
+  '.xml',
+  '.rss',
+  '.atom',
+  '.csv',
+  '.txt',
+  '.doc',
+  '.docx',
+  '.ppt',
+  '.pptx',
+  '.xls',
+  '.xlsx',
+  '.ics',
+  '.ps',
+  '.eps',
+  '.woff',
+  '.woff2',
+  '.ttf',
+  '.otf',
+  '.eot',
+  '.avi',
+  '.ts',
+  '.mpeg',
+  '.mpg',
+  '.flv',
+  '.m4v',
+  '.apk',
+  '.dmg',
+  '.exe',
+  '.bin',
+  '.iso',
+  '.scss',
+  '.less',
+  '.css',
+]);
+
+function getExtension(pathname: string): string {
+  if (!pathname || pathname.endsWith('/')) return '';
+  const clean = pathname.split('/').pop() ?? '';
+  const index = clean.lastIndexOf('.');
+  if (index === -1) return '';
+  return clean.slice(index).toLowerCase();
+}
+
+export function isLikelyHtmlPage(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  const ext = getExtension(url.pathname.toLowerCase());
+  if (HTML_EXTENSIONS.has(ext)) return true;
+  if (NON_HTML_EXTENSIONS.has(ext)) return false;
+  // Default to true for unknown extensions since many dynamic routes omit .html
+  return true;
+}
+
 export function toAbsoluteUrl(base: string, href: string): string | null {
   try {
     return new URL(href, base).toString();

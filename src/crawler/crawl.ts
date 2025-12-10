@@ -1,6 +1,6 @@
 import { chromium, firefox, webkit, Browser } from 'playwright';
 import pLimit from 'p-limit';
-import { isSameHost, normalizeUrl, toAbsoluteUrl } from '../utils/url.js';
+import { isSameHost, isLikelyHtmlPage, normalizeUrl, toAbsoluteUrl } from '../utils/url.js';
 import { parseRobots } from '../utils/robots.js';
 
 type CrawlOptions = {
@@ -42,6 +42,7 @@ export async function crawlSite(opts: CrawlOptions): Promise<string[]> {
 
   async function crawlPage(browser: Browser, url: string, depth: number) {
     if (visited.has(url)) return;
+    if (!isLikelyHtmlPage(url)) return;
     if (opts.respectRobots && !robots.allows(url)) return;
     if (visited.size >= opts.maxPages) return;
     visited.add(url);
@@ -58,7 +59,8 @@ export async function crawlSite(opts: CrawlOptions): Promise<string[]> {
         .map((href) => toAbsoluteUrl(url, href))
         .filter((u): u is string => !!u)
         .map((u) => normalizeUrl(u))
-        .filter((u) => isSameHost(url, u));
+        .filter((u) => isSameHost(url, u))
+        .filter((u) => isLikelyHtmlPage(u));
       // eslint-disable-next-line no-console
       console.log(`Found ${candidates.length} link(s) on ${url}`);
       for (const next of candidates) {
