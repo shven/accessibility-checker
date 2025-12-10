@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { parseStringPromise } from 'xml2js';
 import { isLikelyHtmlPage, isSameHost, normalizeUrl } from '../utils/url.js';
+import { STEALTH_CONTEXT_OPTIONS } from '../utils/constants.js';
 
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -26,9 +27,9 @@ async function fetchXml(url: string) {
       const res = await axios.get(url, {
         timeout: 20000,
         headers: {
-          // Some sites rate-limit generic clients; a real UA + XML Accept helps
-          'User-Agent': 'accessibility-checker/1.0 (+https://github.com) axios',
+          'User-Agent': STEALTH_CONTEXT_OPTIONS.userAgent,
           'Accept': 'application/xml, text/xml; q=0.9, application/xhtml+xml; q=0.8, */*; q=0.7',
+          'Accept-Language': 'en-US,en;q=0.9',
           'Accept-Encoding': 'gzip, compress, deflate, br',
         },
         validateStatus: () => true,

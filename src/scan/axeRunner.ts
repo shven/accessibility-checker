@@ -2,6 +2,8 @@ import { chromium, firefox, webkit, Browser } from 'playwright';
 import { injectAxe } from 'axe-playwright';
 import path from 'path';
 import { promises as fs } from 'fs';
+import { STEALTH_CONTEXT_OPTIONS } from '../utils/constants.js';
+
 
 export type AxeViolation = {
   id: string;
@@ -30,10 +32,16 @@ type RunOptions = {
 
 export async function runAxeForUrls(opts: RunOptions): Promise<AxeResult[]> {
   const start = Date.now();
+  // eslint-disable-next-line no-console
+  console.log(`Starting accessibility scan for ${opts.urls.length} URL(s)...`);
   const browser = await launch(opts);
   const results: AxeResult[] = [];
-  const context = await browser.newContext();
+  const context = await browser.newContext(STEALTH_CONTEXT_OPTIONS);
   const page = await context.newPage();
+  // Hide webdriver property to avoid bot detection
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+  });
   const icon = { search: '🔎', ok: '✅', fail: '❌', error: '⛔' } as const;
   const color = {
     green: (s: string) => `\x1b[32m${s}\x1b[0m`,

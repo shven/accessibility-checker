@@ -1,7 +1,8 @@
-import { chromium, firefox, webkit, Browser } from 'playwright';
+import { chromium, firefox, webkit, Browser, BrowserContext } from 'playwright';
 import pLimit from 'p-limit';
 import { isSameHost, isLikelyHtmlPage, normalizeUrl, toAbsoluteUrl } from '../utils/url.js';
 import { parseRobots } from '../utils/robots.js';
+import { STEALTH_CONTEXT_OPTIONS } from '../utils/constants.js';
 
 type CrawlOptions = {
   baseUrl: string;
@@ -13,6 +14,8 @@ type CrawlOptions = {
   timeoutMs: number;
   respectRobots: boolean;
 };
+
+
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -48,9 +51,13 @@ export async function crawlSite(opts: CrawlOptions): Promise<string[]> {
     visited.add(url);
     if (depth >= opts.maxDepth) return;
 
-    const context = await browser.newContext();
+    const context = await browser.newContext(STEALTH_CONTEXT_OPTIONS);
     const page = await context.newPage();
     try {
+      // Hide webdriver property to avoid bot detection
+      await page.addInitScript(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      });
       await page.goto(url, { timeout: opts.timeoutMs, waitUntil: 'domcontentloaded' });
       // eslint-disable-next-line no-console
       console.log(`Crawled: ${url}`);
