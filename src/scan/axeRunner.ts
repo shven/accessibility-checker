@@ -3,6 +3,8 @@ import { injectAxe } from 'axe-playwright';
 import path from 'path';
 import { promises as fs } from 'fs';
 import { STEALTH_CONTEXT_OPTIONS } from '../utils/constants.js';
+import { sleep } from '../utils/io.js';
+import { log } from '../utils/log.js';
 
 
 export type AxeViolation = {
@@ -27,13 +29,13 @@ type RunOptions = {
   browser: 'chromium' | 'firefox' | 'webkit';
   timeoutMs: number;
   maxIssues: number; // 0 for full scan
+  requestDelay: number; // delay between requests in seconds for rate limiting
   screenshotsDir?: string;
 };
 
 export async function runAxeForUrls(opts: RunOptions): Promise<AxeResult[]> {
   const start = Date.now();
-  // eslint-disable-next-line no-console
-  console.log(`Starting accessibility scan for ${opts.urls.length} URL(s)...`);
+  log.info(`Starting accessibility scan for ${opts.urls.length} URL(s)...`);
   const browser = await launch(opts);
   const results: AxeResult[] = [];
   const context = await browser.newContext(STEALTH_CONTEXT_OPTIONS);
@@ -98,22 +100,23 @@ export async function runAxeForUrls(opts: RunOptions): Promise<AxeResult[]> {
           }
         }
         results.push({ url, violations: enhanced, durationMs: Date.now() - t0 });
-        // eslint-disable-next-line no-console
         if (result.length === 0) {
-          console.log(`${icon.ok} ${url} — ${color.green('0 violation(s)')}`);
+          log.info(`${icon.ok} ${url} — ${color.green('0 violation(s)')}`);
         } else {
-          console.log(`${icon.fail} ${url} — ${color.red(`${result.length} violation(s)`)}`);
+          log.info(`${icon.fail} ${url} — ${color.red(`${result.length} violation(s)`)}`);
         }
         totalViolations += result.length;
         if (opts.maxIssues > 0 && totalViolations >= opts.maxIssues) {
-          // eslint-disable-next-line no-console
-          console.log(`Stopping early after reaching ${totalViolations} violation(s) (threshold: ${opts.maxIssues}).`);
+          log.info(`Stopping early after reaching ${totalViolations} violation(s) (threshold: ${opts.maxIssues}).`);
           break;
+        }
+        // Apply rate limiting delay between requests
+        if (opts.requestDelay > 0) {
+          await sleep(opts.requestDelay * 1000);
         }
       } catch (err: any) {
         results.push({ url, violations: [], error: String(err?.message || err), durationMs: Date.now() - t0 });
-        // eslint-disable-next-line no-console
-        console.log(`${icon.error} ${url} — ${color.red(String(err?.message || err))}`);
+        log.info(`${icon.error} ${url} — ${color.red(String(err?.message || err))}`);
       }
     }
   } finally {

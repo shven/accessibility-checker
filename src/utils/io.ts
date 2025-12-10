@@ -20,4 +20,6 @@ export async function writeText(filePath: string, content: string): Promise<void
   await fs.writeFile(filePath, content, 'utf8');
 }
 
+export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 

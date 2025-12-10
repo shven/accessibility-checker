@@ -13,6 +13,7 @@ import { normalizeUrl } from '../utils/url.js';
 import { runAxeForUrls } from '../scan/axeRunner.js';
 import { writeDeveloperReport } from '../reporters/developerReporter.js';
 import { writeHtmlReport } from '../reporters/htmlReporter.js';
+import { log } from '../utils/log.js';
 import http from 'http';
 import path from 'path';
 import { promises as fsp } from 'fs';
@@ -30,6 +31,7 @@ type CliArgs = {
   respectRobots?: boolean;
   timeoutMs?: number;
   maxIssues?: number; // 0 for full scan
+  requestDelay?: number; // delay between requests in seconds for rate limiting
   serve?: boolean;
   port?: number;
   open?: boolean;
@@ -37,19 +39,16 @@ type CliArgs = {
 };
 
 async function discover(base: string, args: CliArgs) {
-  // eslint-disable-next-line no-console
-  console.log('Discovering sitemaps...');
+  log.info('Discovering sitemaps...');
   const sitemaps = await discoverSitemaps(base, args.sitemap);
-  // eslint-disable-next-line no-console
-  console.log(`Sitemaps: ${sitemaps.join(', ') || '(none found)'}`);
+  log.info(`Sitemaps: ${sitemaps.join(', ') || '(none found)'}`);
   const sitemapUrls = new Set<string>();
   for (const sm of sitemaps) {
     const urls = await parseSitemapUrls(sm, base);
     urls.forEach((u) => sitemapUrls.add(normalizeUrl(u)));
   }
 
-  // eslint-disable-next-line no-console
-  console.log('Crawling site for additional internal links...');
+  log.info('Crawling site for additional internal links...');
   const crawled = await crawlSite({
     baseUrl: base,
     maxPages: args.maxPages ?? defaultConfig.maxPages,
@@ -64,8 +63,7 @@ async function discover(base: string, args: CliArgs) {
   const combined = Array.from(new Set<string>([...sitemapUrls, ...crawled]));
   const urlsPath = await getUrlsPathForBase(base);
   await writeJson(urlsPath, combined);
-  // eslint-disable-next-line no-console
-  console.log(`Discovered ${combined.length} URL(s). Written to ${path.relative(process.cwd(), urlsPath)}`);
+  log.info(`Discovered ${combined.length} URL(s). Written to ${path.relative(process.cwd(), urlsPath)}`);
 }
 
 async function scan(input: string, args: CliArgs) {
@@ -87,10 +85,10 @@ async function scan(input: string, args: CliArgs) {
     browser: (args.browser ?? defaultConfig.browser) as any,
     timeoutMs: args.timeoutMs ?? defaultConfig.timeoutMs,
     maxIssues,
+    requestDelay: args.requestDelay ?? 1,
     screenshotsDir,
-  } as any);
-  // eslint-disable-next-line no-console
-  console.log('Writing reports...');
+  });
+  log.info('Writing reports...');
   // Determine reports directory from base hostname
   const baseForHostname = effectiveBase ?? 'https://example.com';
   const hostname = new URL(baseForHostname).hostname;
@@ -101,8 +99,7 @@ async function scan(input: string, args: CliArgs) {
   await writeDeveloperReport(results, jsonPath);
   await writeHtmlReport(results, htmlPath, { includeImages: true, agency });
   await writeHtmlReport(results, htmlNoImgPath, { includeImages: false, agency });
-  // eslint-disable-next-line no-console
-  console.log(`Reports written to ${jsonPath}, ${htmlPath} and ${htmlNoImgPath}`);
+  log.info(`Reports written to ${jsonPath}, ${htmlPath} and ${htmlNoImgPath}`);
 
   if (args.serve) {
     const port = args.port ?? 4321;
@@ -125,6 +122,7 @@ async function runAll(args: CliArgs) {
   const agency = await ensureAgency();
   const hostname = new URL(base).hostname;
   const maxIssues = await ensureMaxIssues(args.maxIssues, hostname);
+  const requestDelay = await ensureRequestDelay(args.requestDelay, hostname);
   const urlsPath = await getUrlsPathForBase(base);
 
   let shouldDiscover = true;
@@ -145,7 +143,7 @@ async function runAll(args: CliArgs) {
     await discover(base, args);
   }
 
-  await scan(urlsPath, { ...args, maxIssues, base });
+  await scan(urlsPath, { ...args, maxIssues, requestDelay, base });
 }
 
 function ensureProtocol(input: string): string {
@@ -249,6 +247,47 @@ async function ensureMaxIssues(provided?: number, hostname?: string): Promise<nu
   }
 }
 
+async function ensureRequestDelay(provided?: number, hostname?: string): Promise<number> {
+  const DEFAULT_DELAY = 1;
+  const configDir = path.resolve('config');
+  try {
+    await fs.mkdir(configDir, { recursive: true });
+  } catch {}
+  const LAST_DELAY_FILE = hostname
+    ? path.join(configDir, hostname, '.a11y-scan-last-delay')
+    : path.join(configDir, '.a11y-scan-last-delay');
+
+  // If provided via CLI, validate and persist as last used
+  if (typeof provided === 'number' && !Number.isNaN(provided)) {
+    if (provided < 0) throw new Error('requestDelay must be a non-negative number');
+    await fs.writeFile(LAST_DELAY_FILE, String(provided), 'utf8');
+    return provided;
+  }
+
+  // Determine default from last used or fallback
+  let defaultValue = DEFAULT_DELAY;
+  try {
+    const last = (await fs.readFile(LAST_DELAY_FILE, 'utf8')).trim();
+    const parsed = Number(last);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      defaultValue = parsed;
+    }
+  } catch {
+    // ignore missing/invalid last file
+  }
+
+  const rl = createInterface({ input, output });
+  try {
+    const answer = await rl.question(`Enter delay between requests in seconds (0 for no delay, default: ${defaultValue}): `);
+    const value = answer.trim() === '' ? defaultValue : Number(answer.trim());
+    if (!Number.isFinite(value) || value < 0) throw new Error('requestDelay must be a non-negative number');
+    await fs.writeFile(LAST_DELAY_FILE, String(value), 'utf8');
+    return value;
+  } finally {
+    rl.close();
+  }
+}
+
 async function main() {
   const argv = await yargs(hideBin(process.argv))
     .command('discover [base]', 'Auto-discover URLs from sitemap and crawl', (y) =>
@@ -280,6 +319,7 @@ async function main() {
         .option('browser', { type: 'string', choices: ['chromium', 'firefox', 'webkit'] as const })
         .option('timeoutMs', { type: 'number' })
         .option('maxIssues', { type: 'number', default: undefined })
+        .option('requestDelay', { type: 'number', default: undefined, describe: 'Delay between requests in seconds (for rate limiting)' })
         .option('serve', { type: 'boolean', default: false })
         .option('port', { type: 'number', default: 4321 })
         .option('open', { type: 'boolean', default: true })
@@ -301,8 +341,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  // eslint-disable-next-line no-console
-  console.error(err);
+  log.error(err);
   process.exit(1);
 });
 
@@ -325,8 +364,7 @@ async function serveReports(opts: { port: number; defaultFile: string; openBrows
 
   await new Promise<void>((resolve) => server.listen(opts.port, () => resolve()));
   const url = `http://localhost:${opts.port}/`;
-  // eslint-disable-next-line no-console
-  console.log(`Serving reports from ${reportsDir} at ${url}`);
+  log.info(`Serving reports from ${reportsDir} at ${url}`);
   if (opts.openBrowser) {
     try {
       const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';

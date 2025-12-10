@@ -3,6 +3,8 @@ import pLimit from 'p-limit';
 import { isSameHost, isLikelyHtmlPage, normalizeUrl, toAbsoluteUrl } from '../utils/url.js';
 import { parseRobots } from '../utils/robots.js';
 import { STEALTH_CONTEXT_OPTIONS } from '../utils/constants.js';
+import { sleep } from '../utils/io.js';
+import { log } from '../utils/log.js';
 
 type CrawlOptions = {
   baseUrl: string;
@@ -15,18 +17,13 @@ type CrawlOptions = {
   respectRobots: boolean;
 };
 
-
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 export async function crawlSite(opts: CrawlOptions): Promise<string[]> {
   const startUrl = normalizeUrl(opts.baseUrl);
   const visited = new Set<string>();
   const queue: Array<{ url: string; depth: number }> = [{ url: startUrl, depth: 0 }];
   const limiter = pLimit(opts.concurrency);
   const robots = await parseRobots(startUrl);
-  // eslint-disable-next-line no-console
-  console.log(`Starting crawl at ${startUrl} (maxPages=${opts.maxPages}, maxDepth=${opts.maxDepth}, concurrency=${opts.concurrency})`);
+  log.info(`Starting crawl at ${startUrl} (maxPages=${opts.maxPages}, maxDepth=${opts.maxDepth}, concurrency=${opts.concurrency})`);
 
   const browser = await launch(opts);
   try {
@@ -35,8 +32,7 @@ export async function crawlSite(opts: CrawlOptions): Promise<string[]> {
       await Promise.all(batch.map(({ url, depth }) => limiter(() => crawlPage(browser, url, depth))));
       // Throttle between batches to reduce server load
       await sleep(1000);
-      // eslint-disable-next-line no-console
-      console.log(`Visited: ${visited.size} | Queue: ${queue.length}`);
+      log.info(`Visited: ${visited.size} | Queue: ${queue.length}`);
     }
   } finally {
     await browser.close();
@@ -59,8 +55,7 @@ export async function crawlSite(opts: CrawlOptions): Promise<string[]> {
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
       });
       await page.goto(url, { timeout: opts.timeoutMs, waitUntil: 'domcontentloaded' });
-      // eslint-disable-next-line no-console
-      console.log(`Crawled: ${url}`);
+      log.info(`Crawled: ${url}`);
       const anchors = await page.$$eval('a[href]', (as) => as.map((a) => (a as HTMLAnchorElement).getAttribute('href') || ''));
       const candidates = anchors
         .map((href) => toAbsoluteUrl(url, href))
@@ -68,8 +63,7 @@ export async function crawlSite(opts: CrawlOptions): Promise<string[]> {
         .map((u) => normalizeUrl(u))
         .filter((u) => isSameHost(url, u))
         .filter((u) => isLikelyHtmlPage(u));
-      // eslint-disable-next-line no-console
-      console.log(`Found ${candidates.length} link(s) on ${url}`);
+      log.info(`Found ${candidates.length} link(s) on ${url}`);
       for (const next of candidates) {
         if (!visited.has(next)) queue.push({ url: next, depth: depth + 1 });
       }

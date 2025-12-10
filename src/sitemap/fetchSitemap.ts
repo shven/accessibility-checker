@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import { parseStringPromise } from 'xml2js';
 import { isLikelyHtmlPage, isSameHost, normalizeUrl } from '../utils/url.js';
 import { STEALTH_CONTEXT_OPTIONS } from '../utils/constants.js';
+import { log } from '../utils/log.js';
 
 async function fetchXml(url: string) {
   const browser = await chromium.launch({ headless: true });
@@ -87,22 +88,19 @@ async function fetchXml(url: string) {
 }
 
 export async function parseSitemapUrls(sitemapUrl: string, base: string): Promise<string[]> {
-  // eslint-disable-next-line no-console
-  console.log(`Fetching sitemap: ${sitemapUrl}`);
+  log.info(`Fetching sitemap: ${sitemapUrl}`);
   let xml: string;
   try {
     xml = await fetchXml(sitemapUrl);
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn(`Skipping sitemap ${sitemapUrl}: ${(err as Error).message}`);
+    log.warn(`Skipping sitemap ${sitemapUrl}: ${(err as Error).message}`);
     return [];
   }
   let parsed: any;
   try {
     parsed = await parseStringPromise(xml, { explicitArray: false, ignoreAttrs: false });
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn(`Invalid XML at ${sitemapUrl}, skipping: ${(err as Error).message}`);
+    log.warn(`Invalid XML at ${sitemapUrl}, skipping: ${(err as Error).message}`);
     return [];
   }
   const urls = new Set<string>();
@@ -165,8 +163,7 @@ export async function parseSitemapUrls(sitemapUrl: string, base: string): Promis
   }
 
   const list = Array.from(urls);
-  // eslint-disable-next-line no-console
-  console.log(`Parsed ${list.length} URL(s) from sitemap: ${sitemapUrl}`);
+  log.info(`Parsed ${list.length} URL(s) from sitemap: ${sitemapUrl}`);
   return list;
 }
 
