@@ -1,77 +1,89 @@
-import axios from 'axios';
+import { chromium } from 'playwright';
 import { parseStringPromise } from 'xml2js';
 import { isLikelyHtmlPage, isSameHost, normalizeUrl } from '../utils/url.js';
 import { STEALTH_CONTEXT_OPTIONS } from '../utils/constants.js';
 
-async function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function parseRetryAfterMs(retryAfter?: string): number | null {
-  if (!retryAfter) return null;
-  const asNumber = Number(retryAfter);
-  if (!Number.isNaN(asNumber)) return Math.max(0, Math.floor(asNumber * 1000));
-  const date = Date.parse(retryAfter);
-  if (!Number.isNaN(date)) {
-    const diff = date - Date.now();
-    return diff > 0 ? diff : 0;
-  }
-  return null;
-}
-
 async function fetchXml(url: string) {
-  const maxAttempts = 4;
-  let lastError: unknown = null;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const res = await axios.get(url, {
-        timeout: 20000,
-        headers: {
-          'User-Agent': STEALTH_CONTEXT_OPTIONS.userAgent,
-          'Accept': 'application/xml, text/xml; q=0.9, application/xhtml+xml; q=0.8, */*; q=0.7',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Accept-Encoding': 'gzip, compress, deflate, br',
-        },
-        validateStatus: () => true,
-      });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext(STEALTH_CONTEXT_OPTIONS);
+    const page = await context.newPage();
 
-      if (res.status >= 200 && res.status < 300) {
-        const contentType = String(res.headers['content-type'] || '').toLowerCase();
-        const body = String(res.data ?? '');
-        // Guard against HTML error pages returned with 2xx
-        const looksXml = /<\s*(\?xml|urlset|sitemapindex)[\s>]/i.test(body);
-        const isXmlType = contentType.includes('xml') || contentType.includes('text/plain');
-        if (!looksXml && !isXmlType) {
-          throw new Error(`Sitemap at ${url} does not look like XML (content-type=${contentType || 'unknown'})`);
+    // Hide webdriver property to avoid bot detection
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    });
+
+    // Intercept the response to get raw content before browser processes it
+    let rawXml: string | null = null;
+    page.on('response', async (response) => {
+      const responseUrl = response.url();
+      // Match the URL with or without trailing slash, and handle redirects
+      if (responseUrl === url || responseUrl === url.replace(/\/$/, '') || responseUrl === url + '/') {
+        try {
+          const contentType = response.headers()['content-type'] || '';
+          // Only capture if it looks like XML
+          if (contentType.includes('xml') || contentType.includes('text/plain')) {
+            rawXml = await response.text();
+          }
+        } catch {
+          // Response body may not be available
         }
-        return body;
       }
+    });
 
-      // Handle 429/503 with Retry-After if present
-      if (res.status === 429 || res.status === 503) {
-        const retryAfterMs = parseRetryAfterMs(String(res.headers['retry-after'] || ''));
-        const backoffMs = retryAfterMs ?? Math.min(30000, 1000 * Math.pow(2, attempt));
-        // eslint-disable-next-line no-console
-        console.warn(`Sitemap request ${url} returned ${res.status}. Retrying in ${backoffMs}ms (attempt ${attempt}/${maxAttempts}).`);
-        await sleep(backoffMs);
-        continue;
-      }
+    // Use 'commit' instead of 'networkidle' - much faster, waits only for initial response
+    const response = await page.goto(url, { waitUntil: 'commit', timeout: 30000 });
 
-      // 30x redirects should be auto-followed by axios; if not 2xx and not retryable, throw
-      throw new Error(`Failed to fetch sitemap ${url}: ${res.status} ${res.statusText}`);
-    } catch (err) {
-      lastError = err;
-      // Network or parsing error; backoff and retry
-      if (attempt < maxAttempts) {
-        const backoffMs = Math.min(30000, 1000 * Math.pow(2, attempt));
-        // eslint-disable-next-line no-console
-        console.warn(`Error fetching ${url}: ${String((err as Error).message)}. Retrying in ${backoffMs}ms (attempt ${attempt}/${maxAttempts}).`);
-        await sleep(backoffMs);
-        continue;
+    if (!response) {
+      throw new Error(`No response from ${url}`);
+    }
+
+    const status = response.status();
+    if (status < 200 || status >= 300) {
+      throw new Error(`Failed to fetch sitemap ${url}: ${status}`);
+    }
+
+    // Wait a moment for the response handler to capture the content
+    await page.waitForTimeout(500);
+
+    // Try to get content directly from the response if not captured by handler
+    if (!rawXml) {
+      try {
+        rawXml = await response.text();
+      } catch {
+        // Response body may have been consumed
       }
     }
+
+    // Use intercepted raw XML if available, otherwise try to extract from page
+    let xmlContent: string | null = rawXml;
+
+    if (!xmlContent) {
+      // Fallback: try to get the XML from the page's pre tag (browsers often wrap XML in <pre>)
+      xmlContent = await page.evaluate(() => {
+        const pre = document.querySelector('pre');
+        if (pre) return pre.textContent || '';
+        // Or get the entire document's text content
+        return document.documentElement.textContent || '';
+      });
+    }
+
+    if (!xmlContent) {
+      throw new Error(`Could not extract content from ${url}`);
+    }
+
+    // Check if it looks like XML
+    const looksXml = /<\s*(\?xml|urlset|sitemapindex)[\s>]/i.test(xmlContent);
+    if (!looksXml) {
+      throw new Error(`Sitemap at ${url} does not look like XML`);
+    }
+
+    await context.close();
+    return xmlContent;
+  } finally {
+    await browser.close();
   }
-  throw lastError instanceof Error ? lastError : new Error('Unknown sitemap fetch error');
 }
 
 export async function parseSitemapUrls(sitemapUrl: string, base: string): Promise<string[]> {

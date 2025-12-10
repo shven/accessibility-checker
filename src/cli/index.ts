@@ -148,6 +148,14 @@ async function runAll(args: CliArgs) {
   await scan(urlsPath, { ...args, maxIssues, base });
 }
 
+function ensureProtocol(input: string): string {
+  const trimmed = input.trim();
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  return `https://${trimmed}`;
+}
+
 async function ensureBase(provided?: string): Promise<string> {
   const configDir = path.resolve('config');
   try {
@@ -158,7 +166,7 @@ async function ensureBase(provided?: string): Promise<string> {
   // If provided via CLI, validate and persist as last used
   if (provided) {
     // Validate
-    const u = new URL(provided);
+    const u = new URL(ensureProtocol(provided));
     const origin = `${u.protocol}//${u.host}`;
     await fs.writeFile(LAST_URL_FILE, origin, 'utf8');
     // Also persist per-domain state directory for convenience
@@ -186,7 +194,7 @@ async function ensureBase(provided?: string): Promise<string> {
     const answer = await rl.question(`Enter the base URL to scan (default: ${defaultValue}): `);
     const trimmed = (answer.trim() || defaultValue);
     // Validate and normalize to origin
-    const u = new URL(trimmed);
+    const u = new URL(ensureProtocol(trimmed));
     const origin = `${u.protocol}//${u.host}`;
     await fs.writeFile(LAST_URL_FILE, origin, 'utf8');
     // Mirror per-domain last base
